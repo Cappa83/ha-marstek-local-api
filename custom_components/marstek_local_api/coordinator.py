@@ -15,6 +15,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import MarstekAPIError, MarstekUDPClient
 from .compatibility import CompatibilityMatrix
 from .const import (
+    BACKOFF_FAILURE_THRESHOLD,
+    BACKOFF_MAX_MULTIPLIER,
+    BACKOFF_MULTIPLIER,
     COMMAND_MAX_ATTEMPTS,
     COMMAND_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
@@ -37,6 +40,7 @@ class MarstekMultiDeviceCoordinator(DataUpdateCoordinator):
         hass: HomeAssistant,
         devices: list[dict[str, Any]],
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
+        mode_poll_interval: int | None = None,
         config_entry: ConfigEntry | None = None,
     ) -> None:
         """Initialize the multi-device coordinator."""
@@ -44,6 +48,7 @@ class MarstekMultiDeviceCoordinator(DataUpdateCoordinator):
         self.device_coordinators: dict[str, MarstekDataUpdateCoordinator] = {}
         self.update_count = 1
         self._config_entry = config_entry
+        self._mode_poll_interval = mode_poll_interval
 
         super().__init__(
             hass,
@@ -81,6 +86,7 @@ class MarstekMultiDeviceCoordinator(DataUpdateCoordinator):
                 firmware_version=device_data.get("firmware", 0),
                 device_model=device_data.get("device", ""),
                 scan_interval=self.update_interval.total_seconds(),
+                mode_poll_interval=self._mode_poll_interval,
                 config_entry=self._config_entry,
                 device_mac=mac,
             )
@@ -259,6 +265,7 @@ class MarstekDataUpdateCoordinator(DataUpdateCoordinator):
         firmware_version: int,
         device_model: str,
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
+        mode_poll_interval: int | None = None,
         config_entry: ConfigEntry | None = None,
         device_mac: str | None = None,
     ) -> None:
@@ -273,6 +280,11 @@ class MarstekDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_update_start: float | None = None
         self._config_entry = config_entry
         self._device_mac = device_mac  # Used for multi-device mode to identify which device to update
+        self._base_scan_interval = scan_interval
+        self._max_scan_interval = scan_interval * BACKOFF_MAX_MULTIPLIER
+        self._consecutive_failures = 0
+        self._mode_poll_interval = mode_poll_interval or UPDATE_INTERVAL_MEDIUM * scan_interval
+        self._mode_poll_every = max(1, round(self._mode_poll_interval / scan_interval))
 
         # Staleness tracking - track last successful update per category
         self.category_last_updated: dict[str, float] = {}
@@ -512,6 +524,10 @@ class MarstekDataUpdateCoordinator(DataUpdateCoordinator):
                     battery_status["bat_capacity"] = self.compatibility.scale_value(
                         battery_status["bat_capacity"], "bat_capacity"
                     )
+                if "rated_capacity" in battery_status:
+                    battery_status["rated_capacity"] = self.compatibility.scale_value(
+                        battery_status["rated_capacity"], "rated_capacity"
+                    )
                 if "bat_voltage" in battery_status:
                     battery_status["bat_voltage"] = self.compatibility.scale_value(
                         battery_status["bat_voltage"], "bat_voltage"
@@ -525,10 +541,12 @@ class MarstekDataUpdateCoordinator(DataUpdateCoordinator):
                 had_success = True
 
             # Medium priority - every 5th update (~300s)
-            # EM, PV, Mode - slower-changing data
+            # EM, PV - slower-changing data
             run_medium = self.update_count == 1 or self.update_count % UPDATE_INTERVAL_MEDIUM == 0
+            run_mode = self.update_count == 1 or self.update_count % self._mode_poll_every == 0
             if is_first_update and not had_success:
                 run_medium = False
+                run_mode = False
             if run_medium:
                 try:
                     await asyncio.sleep(_command_delay())  # Delay between API calls
@@ -552,6 +570,7 @@ class MarstekDataUpdateCoordinator(DataUpdateCoordinator):
                     except Exception as err:
                         _LOGGER.debug("Failed to get PV status: %s", err)
 
+            if run_mode:
                 try:
                     await asyncio.sleep(_command_delay())  # Delay between API calls
                     mode_status = await self.api.get_es_mode(**_command_kwargs())
@@ -614,11 +633,28 @@ class MarstekDataUpdateCoordinator(DataUpdateCoordinator):
             if had_success:
                 self.last_message_timestamp = time.time()
                 _LOGGER.debug("Updated data - at least one API call succeeded (keys: %s)", list(data.keys()))
+                self._consecutive_failures = 0
+                if self.update_interval.total_seconds() != self._base_scan_interval:
+                    self.update_interval = timedelta(seconds=self._base_scan_interval)
             else:
                 _LOGGER.debug(
                     "No fresh data this update - all API calls may have timed out, keeping previous values (keys: %s)",
                     list(data.keys()),
                 )
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= BACKOFF_FAILURE_THRESHOLD:
+                    current_interval = self.update_interval.total_seconds()
+                    next_interval = min(
+                        current_interval * BACKOFF_MULTIPLIER,
+                        self._max_scan_interval,
+                    )
+                    if next_interval != current_interval:
+                        self.update_interval = timedelta(seconds=next_interval)
+                        _LOGGER.warning(
+                            "Backing off polling interval to %.1fs after %d consecutive failures",
+                            next_interval,
+                            self._consecutive_failures,
+                        )
 
             # Add diagnostic data (will be recalculated on sensor access)
             es_stats = self.api.get_command_stats(METHOD_ES_STATUS)

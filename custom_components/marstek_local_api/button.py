@@ -141,7 +141,7 @@ class MarstekModeButton(CoordinatorEntity, ButtonEntity):
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     if await self.coordinator.api.set_es_mode(config):
-                        self._update_cached_mode(config)
+                        await self._verify_and_update_mode(config)
                         _LOGGER.info("Successfully set operating mode to %s", self._mode)
                         success = True
                         break
@@ -203,9 +203,12 @@ class MarstekModeButton(CoordinatorEntity, ButtonEntity):
                 "ai_cfg": {"enable": 1},
             }
         elif self._mode == MODE_MANUAL:
+            current_cfg = (
+                (self.coordinator.data or {}).get("mode", {}).get("manual_cfg")
+            )
             return {
                 "mode": MODE_MANUAL,
-                "manual_cfg": dict(DEFAULT_MANUAL_MODE_CFG),
+                "manual_cfg": dict(current_cfg or DEFAULT_MANUAL_MODE_CFG),
             }
 
         return {}
@@ -216,6 +219,28 @@ class MarstekModeButton(CoordinatorEntity, ButtonEntity):
         updated = dict(current)
         mode_state = _mode_state_from_config(self._mode, config)
         updated["mode"] = {**(current.get("mode") or {}), **mode_state}
+        self.coordinator.async_set_updated_data(updated)
+
+    async def _verify_and_update_mode(self, config: dict) -> None:
+        """Verify the mode change and update cached data."""
+        self._update_cached_mode(config)
+        try:
+            mode_status = await self.coordinator.api.get_es_mode()
+        except Exception as err:
+            _LOGGER.debug("Failed to verify mode after set: %s", err)
+            return
+        if not mode_status:
+            return
+        reported_mode = mode_status.get("mode")
+        if reported_mode and reported_mode != self._mode:
+            _LOGGER.warning(
+                "Device reported mode %s after setting %s",
+                reported_mode,
+                self._mode,
+            )
+        current = self.coordinator.data or {}
+        updated = dict(current)
+        updated["mode"] = {**(current.get("mode") or {}), **mode_status}
         self.coordinator.async_set_updated_data(updated)
 
 
@@ -307,7 +332,7 @@ class MarstekMultiDeviceModeButton(CoordinatorEntity, ButtonEntity):
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     if await self.device_coordinator.api.set_es_mode(config):
-                        self._update_cached_mode(config)
+                        await self._verify_and_update_mode(config)
                         _LOGGER.info(
                             "Successfully set operating mode to %s for device %s",
                             self._mode,
@@ -391,9 +416,12 @@ class MarstekMultiDeviceModeButton(CoordinatorEntity, ButtonEntity):
                 "ai_cfg": {"enable": 1},
             }
         elif self._mode == MODE_MANUAL:
+            current_cfg = (
+                (self.device_coordinator.data or {}).get("mode", {}).get("manual_cfg")
+            )
             return {
                 "mode": MODE_MANUAL,
-                "manual_cfg": dict(DEFAULT_MANUAL_MODE_CFG),
+                "manual_cfg": dict(current_cfg or DEFAULT_MANUAL_MODE_CFG),
             }
 
         return {}
@@ -411,6 +439,37 @@ class MarstekMultiDeviceModeButton(CoordinatorEntity, ButtonEntity):
         state = _mode_state_from_config(self._mode, config)
         updated_device = self._update_device_cache(state)
 
+        current_system = self.coordinator.data or {}
+        devices = dict((current_system.get("devices") or {}))
+        devices[self.device_mac] = updated_device
+
+        updated_system = dict(current_system)
+        updated_system["devices"] = devices
+        self.coordinator.async_set_updated_data(updated_system)
+
+    async def _verify_and_update_mode(self, config: dict) -> None:
+        """Verify the mode change and update cached data for device and aggregate."""
+        self._update_cached_mode(config)
+        try:
+            mode_status = await self.device_coordinator.api.get_es_mode()
+        except Exception as err:
+            _LOGGER.debug(
+                "Failed to verify mode for device %s after set: %s",
+                self.device_mac,
+                err,
+            )
+            return
+        if not mode_status:
+            return
+        reported_mode = mode_status.get("mode")
+        if reported_mode and reported_mode != self._mode:
+            _LOGGER.warning(
+                "Device %s reported mode %s after setting %s",
+                self.device_mac,
+                reported_mode,
+                self._mode,
+            )
+        updated_device = self._update_device_cache(mode_status)
         current_system = self.coordinator.data or {}
         devices = dict((current_system.get("devices") or {}))
         devices[self.device_mac] = updated_device
