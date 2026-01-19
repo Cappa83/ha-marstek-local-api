@@ -6,9 +6,12 @@ import json
 import logging
 import random
 import socket
+import struct
+import subprocess
+import sys
 import time
 from copy import deepcopy
-from typing import Any
+from typing import Any, Callable
 
 from .const import (
     ALL_API_METHODS,
@@ -42,6 +45,8 @@ _shared_protocols = {}
 _transport_refcounts = {}
 _clients_by_port = {}  # Map port -> list of clients
 
+MessageHandler = Callable[[dict[str, Any], tuple[str, int]], Any]
+
 
 class MarstekUDPClient:
     """UDP client for Marstek Local API communication."""
@@ -61,7 +66,7 @@ class MarstekUDPClient:
         self.remote_port = remote_port or DEFAULT_PORT
         self.transport: asyncio.DatagramTransport | None = None
         self.protocol: MarstekProtocol | None = None
-        self._handlers: list = []
+        self._handlers: list[MessageHandler] = []
         self._connected = False
         self._stale_message_counter = 0
         self._command_stats: dict[str, dict[str, Any]] = {}
@@ -74,7 +79,6 @@ class MarstekUDPClient:
             return
 
         loop = asyncio.get_event_loop()
-        self._loop = loop
 
         _LOGGER.info(
             "Connecting UDP socket: local_port=%s, remote_host=%s, remote_port=%s",
@@ -86,7 +90,6 @@ class MarstekUDPClient:
             # on the same port can receive all UDP messages
             if self.port not in _shared_transports:
                 # Create shared UDP endpoint for this port
-                import sys
                 endpoint_kwargs = {
                     "local_addr": ("0.0.0.0", self.port),
                     "allow_broadcast": True,
@@ -540,16 +543,11 @@ class MarstekUDPClient:
         Uses simple heuristic: broadcast on /24 of primary interface and global broadcast.
         This works for most home networks and avoids VPN interfaces.
         """
-        import struct
-        import subprocess
-
         broadcast_addrs = set()
 
         try:
             # Parse ifconfig to get all network interfaces and their IPs
             result = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=2)
-            current_ip = None
-
             for line in result.stdout.split('\n'):
                 # Parse inet lines
                 if '\tinet ' in line:
