@@ -49,7 +49,8 @@
         "title": "Update Interval",
         "description": "Configure how often data is refreshed",
         "data": {
-          "scan_interval": "Update Interval (seconds)"
+          "scan_interval": "Update Interval (seconds)",
+          "mode_poll_interval": "Mode Poll Interval (seconds)"
         }
       },
       "rename_device": {

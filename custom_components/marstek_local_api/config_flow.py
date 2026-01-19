@@ -17,7 +17,14 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .api import MarstekAPIError, MarstekUDPClient
-from .const import CONF_PORT, DATA_COORDINATOR, DEFAULT_PORT, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import (
+    CONF_PORT,
+    DATA_COORDINATOR,
+    DEFAULT_MODE_POLL_INTERVAL,
+    DEFAULT_PORT,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -422,6 +429,12 @@ class OptionsFlow(config_entries.OptionsFlow):
                         "scan_interval",
                         default=self.config_entry.options.get(
                             "scan_interval", DEFAULT_SCAN_INTERVAL
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=15, max=900)),
+                    vol.Optional(
+                        "mode_poll_interval",
+                        default=self.config_entry.options.get(
+                            "mode_poll_interval", DEFAULT_MODE_POLL_INTERVAL
                         ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=15, max=900)),
                 }
