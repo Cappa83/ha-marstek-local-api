@@ -353,7 +353,7 @@ class OptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialise the options flow."""
-        super().__init__(config_entry)
+        self.config_entry = config_entry
         self._devices: list[dict[str, Any]] = list(config_entry.data.get("devices", []))
         self._discovered_devices: list[dict[str, Any]] = []
 
