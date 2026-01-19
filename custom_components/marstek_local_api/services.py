@@ -176,6 +176,42 @@ async def _refresh_after_write(
             _LOGGER.warning("Failed to refresh aggregate coordinator after write: %s", err)
 
 
+async def _verify_mode_after_set(
+    device_coordinator: MarstekDataUpdateCoordinator,
+    aggregate_coordinator: MarstekMultiDeviceCoordinator | None,
+    device_identifier: str | None,
+    expected_mode: str,
+    payload: dict | None = None,
+) -> None:
+    """Read back mode after a set and update cached data."""
+    try:
+        mode_status = await device_coordinator.api.get_es_mode()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Failed to verify mode after set: %s", err)
+        return
+
+    if not mode_status:
+        return
+
+    reported_mode = mode_status.get("mode")
+    if reported_mode and reported_mode != expected_mode:
+        _LOGGER.warning(
+            "Device reported mode %s after setting %s",
+            reported_mode,
+            expected_mode,
+        )
+
+    mode_payload = dict(payload or {})
+    mode_payload.update(mode_status)
+    _apply_local_mode_state(
+        device_coordinator,
+        aggregate_coordinator,
+        device_identifier,
+        mode_status.get("mode", expected_mode),
+        mode_payload,
+    )
+
+
 def _apply_local_mode_state(
     device_coordinator: MarstekDataUpdateCoordinator,
     aggregate_coordinator: MarstekMultiDeviceCoordinator | None,
@@ -312,6 +348,15 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     {"manual_cfg": manual_cfg},
                 )
                 hass.async_create_task(
+                    _verify_mode_after_set(
+                        device_coordinator,
+                        aggregate_coordinator,
+                        device_identifier,
+                        MODE_MANUAL,
+                        {"manual_cfg": manual_cfg},
+                    )
+                )
+                hass.async_create_task(
                     _refresh_after_write(device_coordinator, aggregate_coordinator)
                 )
             else:
@@ -384,6 +429,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 device_identifier,
                 MODE_MANUAL,
             )
+            hass.async_create_task(
+                _verify_mode_after_set(
+                    device_coordinator,
+                    aggregate_coordinator,
+                    device_identifier,
+                    MODE_MANUAL,
+                )
+            )
         hass.async_create_task(
             _refresh_after_write(device_coordinator, aggregate_coordinator)
         )
@@ -445,6 +498,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 aggregate_coordinator,
                 device_identifier,
                 MODE_MANUAL,
+            )
+            hass.async_create_task(
+                _verify_mode_after_set(
+                    device_coordinator,
+                    aggregate_coordinator,
+                    device_identifier,
+                    MODE_MANUAL,
+                )
             )
         hass.async_create_task(
             _refresh_after_write(device_coordinator, aggregate_coordinator)
@@ -515,6 +576,15 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                     device_identifier,
                     MODE_PASSIVE,
                     {"passive_cfg": config["passive_cfg"]},
+                )
+                hass.async_create_task(
+                    _verify_mode_after_set(
+                        device_coordinator,
+                        aggregate_coordinator,
+                        device_identifier,
+                        MODE_PASSIVE,
+                        {"passive_cfg": config["passive_cfg"]},
+                    )
                 )
                 hass.async_create_task(
                     _refresh_after_write(device_coordinator, aggregate_coordinator)

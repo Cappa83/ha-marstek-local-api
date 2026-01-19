@@ -11,6 +11,7 @@ from .api import MarstekUDPClient
 from .const import (
     CONF_PORT,
     DATA_COORDINATOR,
+    DEFAULT_MODE_POLL_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -29,6 +30,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Get scan interval from options (Design Doc §297-302)
     scan_interval = entry.options.get("scan_interval", DEFAULT_SCAN_INTERVAL)
 
+    mode_poll_interval = entry.options.get(
+        "mode_poll_interval", DEFAULT_MODE_POLL_INTERVAL
+    )
+
     # Check if this is a multi-device or single-device entry
     if "devices" in entry.data:
         # Multi-device mode
@@ -39,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass,
             devices=entry.data["devices"],
             scan_interval=scan_interval,
+            mode_poll_interval=mode_poll_interval,
             config_entry=entry,
         )
 
@@ -77,6 +83,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             firmware_version=entry.data.get("firmware", 0),
             device_model=entry.data.get("device", ""),
             scan_interval=scan_interval,
+            mode_poll_interval=mode_poll_interval,
             config_entry=entry,
         )
 
