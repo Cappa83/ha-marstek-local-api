@@ -524,6 +524,10 @@ class MarstekDataUpdateCoordinator(DataUpdateCoordinator):
                     battery_status["bat_capacity"] = self.compatibility.scale_value(
                         battery_status["bat_capacity"], "bat_capacity"
                     )
+                if "rated_capacity" in battery_status:
+                    battery_status["rated_capacity"] = self.compatibility.scale_value(
+                        battery_status["rated_capacity"], "rated_capacity"
+                    )
                 if "bat_voltage" in battery_status:
                     battery_status["bat_voltage"] = self.compatibility.scale_value(
                         battery_status["bat_voltage"], "bat_voltage"
