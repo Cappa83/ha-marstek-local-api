@@ -807,8 +807,23 @@ class MarstekUDPClient:
             {"id": 0, "config": config}
         )
 
-        if result and result.get("set_result"):
-            return True
+        if result is None:
+            return False
+
+        if isinstance(result, dict):
+            if "set_result" in result:
+                return bool(result.get("set_result"))
+            nested_result = result.get("result")
+            if isinstance(nested_result, bool):
+                return nested_result
+
+        if isinstance(result, bool):
+            return result
+
+        if isinstance(result, int):
+            return bool(result)
+
+        _LOGGER.debug("Unexpected set_es_mode response payload: %s", result)
         return False
 
 
